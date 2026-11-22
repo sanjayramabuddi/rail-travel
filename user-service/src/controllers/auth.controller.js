@@ -2,6 +2,7 @@ const { BadRequestError } = require("../utils/error");
 const asyncHandler = require("../utils/asyncHandler");
 const { config } = require("../config");
 const authService = require("../services/auth.service");
+const getDeviceFingerprint = require("../utils/deviceFingerprint");
 
 const isProd = process.env.NODE_ENV === "development";
 
@@ -17,14 +18,12 @@ exports.sendOTP = asyncHandler(async (req, res) => {
   if (!firstName || !lastName || !email || !password || !confirmPassword) {
     throw new BadRequestError("All fields are mandatory");
   }
-
   if (password !== confirmPassword) {
     throw new BadRequestError("Password mismatch");
   }
 
   const { otpSessionId } = await authService.sendOTP( firstName, lastName, email, password );
-  res
-    .cookie("otp_session", otpSessionId, cookieOptions(config.OTP_TTL * 1000))
+  res.cookie("otp_session", otpSessionId, cookieOptions(config.OTP_TTL * 1000))
     .status(200)
     .json({
       success: true,
@@ -41,10 +40,28 @@ exports.verifyOTP = asyncHandler(async (req, res) => {
 
   const user = await authService.verifyOTP(otp, otpSessionId);
   res.clearCookie("otp_session");
-
   return res.status(201).json({
     success: true,
     message: "User Account created successfully",
     data: user,
   });
+});
+
+exports.login = asyncHandler(async (req, res) => {
+  const { email, password } = req.body;
+  if (!email || !password) {
+    throw new BadRequestError("Email and Password are required");
+  }
+
+  const deviceId = getDeviceFingerprint(req);
+  const { accessToken, refreshToken, loggedInUser } = await authService.login( email, password, deviceId );
+
+  res.cookie("accesstoken", accessToken, cookieOptions(config.ACCESS_TOKEN_EXP_SEC * 1000));
+  res.cookie("refreshtoken",refreshToken,cookieOptions(config.ACCESS_TOKEN_EXP_SEC * 1000))
+    .status(200)
+    .json({
+      success: true,
+      message: "Logged in successfully",
+      loggedInUser,
+    });
 });
