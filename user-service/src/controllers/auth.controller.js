@@ -1,8 +1,8 @@
-const { BadRequestError } = require("../utils/error");
-const asyncHandler = require("../utils/asyncHandler");
 const { config } = require("../config");
+const asyncHandler = require("../utils/asyncHandler");
 const authService = require("../services/auth.service");
 const getDeviceFingerprint = require("../utils/deviceFingerprint");
+const { BadRequestError, UnauthorizedError } = require("../utils/error");
 
 const isProd = process.env.NODE_ENV === "development";
 
@@ -56,12 +56,30 @@ exports.login = asyncHandler(async (req, res) => {
   const deviceId = getDeviceFingerprint(req);
   const { accessToken, refreshToken, loggedInUser } = await authService.login( email, password, deviceId );
 
-  res.cookie("accesstoken", accessToken, cookieOptions(config.ACCESS_TOKEN_EXP_SEC * 1000));
-  res.cookie("refreshtoken",refreshToken,cookieOptions(config.ACCESS_TOKEN_EXP_SEC * 1000))
+  res.cookie("accessToken", accessToken, cookieOptions(config.ACCESS_TOKEN_EXP_SEC * 1000));
+  res.cookie("refreshToken",refreshToken,cookieOptions(config.ACCESS_TOKEN_EXP_SEC * 1000))
     .status(200)
     .json({
       success: true,
       message: "Logged in successfully",
       loggedInUser,
+    });
+});
+
+exports.rotateRefreshToken = asyncHandler(async (req, res) => {
+  const refreshToken = req.cookies.refreshToken;
+  if (!refreshToken) {
+    throw new UnauthorizedError("Refresh token is missing", "LOGIN AGAIN");
+  }
+  
+  const deviceId = getDeviceFingerprint(req);
+  const { newAccessToken, newRefreshToken } = await authService.rotateRefreshToken(refreshToken, deviceId);
+
+  res.cookie("accessToken", newAccessToken, cookieOptions(config.ACCESS_TOKEN_EXP_SEC * 1000));
+  res.cookie("refreshToken",newRefreshToken,cookieOptions(config.REFRESH_TOKEN_EXP_SEC * 1000))
+    .status(200)
+    .json({
+      success: true,
+      message: "Access and Refresh token reissued",
     });
 });
