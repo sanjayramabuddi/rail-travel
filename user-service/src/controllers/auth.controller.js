@@ -22,7 +22,7 @@ exports.sendOTP = asyncHandler(async (req, res) => {
     throw new BadRequestError("Password mismatch");
   }
 
-  const { otpSessionId } = await authService.sendOTP( firstName, lastName, email, password );
+  const { otpSessionId } = await authService.sendOTP(firstName, lastName, email, password);
   res.cookie("otp_session", otpSessionId, cookieOptions(config.OTP_TTL * 1000))
     .status(200)
     .json({
@@ -40,6 +40,7 @@ exports.verifyOTP = asyncHandler(async (req, res) => {
 
   const user = await authService.verifyOTP(otp, otpSessionId);
   res.clearCookie("otp_session");
+
   return res.status(201).json({
     success: true,
     message: "User Account created successfully",
@@ -54,10 +55,10 @@ exports.login = asyncHandler(async (req, res) => {
   }
 
   const deviceId = getDeviceFingerprint(req);
-  const { accessToken, refreshToken, loggedInUser } = await authService.login( email, password, deviceId );
+  const { accessToken, refreshToken, loggedInUser } = await authService.login(email, password, deviceId);
 
   res.cookie("accessToken", accessToken, cookieOptions(config.ACCESS_TOKEN_EXP_SEC * 1000));
-  res.cookie("refreshToken",refreshToken,cookieOptions(config.ACCESS_TOKEN_EXP_SEC * 1000))
+  res.cookie("refreshToken", refreshToken, cookieOptions(config.ACCESS_TOKEN_EXP_SEC * 1000))
     .status(200)
     .json({
       success: true,
@@ -76,10 +77,34 @@ exports.rotateRefreshToken = asyncHandler(async (req, res) => {
   const { newAccessToken, newRefreshToken } = await authService.rotateRefreshToken(refreshToken, deviceId);
 
   res.cookie("accessToken", newAccessToken, cookieOptions(config.ACCESS_TOKEN_EXP_SEC * 1000));
-  res.cookie("refreshToken",newRefreshToken,cookieOptions(config.REFRESH_TOKEN_EXP_SEC * 1000))
+  res.cookie("refreshToken", newRefreshToken, cookieOptions(config.REFRESH_TOKEN_EXP_SEC * 1000))
     .status(200)
     .json({
       success: true,
       message: "Access and Refresh token reissued",
+    });
+});
+
+exports.verifyGoogleIdToken = asyncHandler(async (req, res) => {
+  const { idToken } = req.body;
+  if (!idToken) {
+    throw new BadRequestError("Invalid Google ID Token", "INVALID TOKEN");
+  }
+
+  const deviceId = getDeviceFingerprint(req);
+  const { accessToken, refreshToken, loggedInUser } = await authService.verifyGoogleIdToken(idToken, deviceId);
+
+  res.cookie("accessToken", accessToken, cookieOptions(config.ACCESS_TOKEN_EXP_SEC * 1000));
+  res.cookie("refreshToken", refreshToken, {
+      httpOnly: true,
+      secure: true,
+      sameSite: "strict",
+      maxAge: config.REFRESH_TOKEN_EXP_SEC * 1000,
+    })
+    .status(200)
+    .json({
+      success: true,
+      message: "Logged in successfully",
+      loggedInUser,
     });
 });

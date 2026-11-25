@@ -8,6 +8,8 @@ const { generateAndStoreOtp, verifyOtp } = require("../utils/otp");
 const { sendOtpEmail, verifyOtpEmail } = require("../utils/email");
 const { generateAccessToken, generateRefreshToken, verifyRefreshToken } = require("../utils/auth");
 const { BadRequestError, UnauthorizedError, ConflictError, ForbiddenError } = require("../utils/error");
+const { OAuth2Client } = require("google-auth-library");
+const client = new OAuth2Client(config.GOOGLE_CLIENT_ID);
 
 const sendOTP = async (firstName, lastName, email, password) => {
   const existingUser = await prisma.user.findUnique({
@@ -92,9 +94,83 @@ const rotateRefreshToken = async (refreshToken, deviceId) => {
   return { newAccessToken, newRefreshToken };
 };
 
+const verifyGoogleIdToken = async (idToken, deviceId) => {
+  const ticket = await client.verifyIdToken({ idToken, audience: config.GOOGLE_CLIENT_ID });
+  const payload = ticket.getPayload();
+  if (!payload.sub || !payload.email) {
+    throw new UnauthorizedError("Invalid Google Token Payload");
+  }
+
+  const googleUser = {
+    provider: payload.iss,
+    providerId: payload.sub,
+    email: payload.email,
+    firstName: payload.given_name,
+    lastName: payload.family_name,
+    emailVerified: payload.email_verified || false,
+  };
+
+  const user = await prisma.$transaction(async (tx) => {
+    let googleAuth = await tx.authProvider.findUnique({
+      where: {
+        provider_providerId: {
+          provider: googleUser.provider,
+          providerId: googleUser.providerId,
+        },
+      },
+      include: { user: true },
+    });
+
+    if (googleAuth) {
+      return googleAuth.user;
+    }
+
+    let existingUser = await tx.user.findUnique({
+      where: { email: googleUser.email },
+    });
+
+    if (existingUser) {
+      await tx.authProvider.create({
+        data: {
+          provider: googleUser.provider,
+          providerId: googleUser.providerId,
+          userId: existingUser.id,
+        },
+      });
+      return existingUser;
+    }
+
+    return await tx.user.create({
+      data: {
+        email: googleUser.email,
+        firstName: googleUser.firstName,
+        lastName: googleUser.lastName,
+        emailVerified: googleUser.emailVerified,
+        AuthProviders: {
+          create: {
+            provider: googleUser.provider,
+            providerId: googleUser.providerId,
+          },
+        },
+      },
+    });
+  });
+
+  const accessToken = generateAccessToken(user.id);
+  const refreshToken = generateRefreshToken(user.id);
+  const { jti } = jwt.decode(refreshToken);
+
+  await redis.set(`refresh:${user.id}:${deviceId}`, jti, "EX", config.REFRESH_TOKEN_EXP_SEC);
+  const { password: _password, ...safeUser } = user;
+  await redis.set(`user:${user.id}`, JSON.stringify(safeUser), "EX", config.REDIS_USER_TTL);
+
+  return { accessToken, refreshToken, loggedInUser: safeUser };
+};
+
 module.exports = {
   sendOTP,
   verifyOTP,
   login,
   rotateRefreshToken,
+  verifyGoogleIdToken
 };
